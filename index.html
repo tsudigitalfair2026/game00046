@@ -1,0 +1,609 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0,maximum-scale=1.0,user-scalable=no">
+<title>ぺんぎんシューティングDX</title>
+<style>
+*{
+    margin:0;
+    padding:0;
+    box-sizing:border-box;
+    -webkit-tap-highlight-color:transparent;
+}
+html,body{
+    width:100%;
+    height:100%;
+    overflow:hidden;
+    touch-action:none;
+    font-family:sans-serif;
+    background:#0b1736;
+    color:#fff;
+}
+.screen{
+    display:none;
+    width:100%;
+    height:100%;
+    flex-direction:column;
+    justify-content:center;
+    align-items:center;
+    padding:20px;
+    text-align:center;
+}
+.active{
+    display:flex;
+}
+button{
+    padding:16px 30px;
+    font-size:1.2rem;
+    border:none;
+    border-radius:14px;
+    background:#2f9cff;
+    color:#fff;
+    min-width:220px;
+    margin-top:20px;
+}
+#hud{
+    width:100%;
+    display:flex;
+    justify-content:space-between;
+    align-items:center;
+    padding:10px;
+    font-weight:bold;
+    font-size:0.95rem;
+}
+#gameArea{
+    position:relative;
+    width:100%;
+    flex:1;
+    overflow:hidden;
+    background:linear-gradient(#59c6ff,#b9f5ff);
+}
+#player{
+    position:absolute;
+    font-size:46px;
+    pointer-events:none;
+}
+.enemy,.bullet,.boss{
+    position:absolute;
+    user-select:none;
+}
+.enemy{
+    font-size:36px;
+}
+.bullet{
+    font-size:20px;
+}
+.boss{
+    font-size:90px;
+    filter:drop-shadow(0 0 8px #000);
+}
+#bossHpBar{
+    position:absolute;
+    top:10px;
+    left:10px;
+    width:calc(100% - 20px);
+    height:18px;
+    background:rgba(0,0,0,.3);
+    border-radius:20px;
+    overflow:hidden;
+    display:none;
+}
+#bossHp{
+    height:100%;
+    width:100%;
+    background:#ff3b3b;
+}
+.flash{
+    position:absolute;
+    inset:0;
+    background:rgba(255,255,255,.85);
+    pointer-events:none;
+}
+h1{
+    margin-bottom:15px;
+}
+.desc{
+    line-height:1.7;
+    max-width:520px;
+}
+#resultScore,#rank{
+    font-size:1.5rem;
+    margin:8px;
+}
+</style>
+</head>
+<body>
+
+<div id="startScreen" class="screen active">
+    <h1>🐧ぺんぎんシューティングDX</h1>
+    <div class="desc">
+        指でぺんぎんをドラッグして移動！<br>
+        魚ミサイルは自動発射！<br>
+        敵を倒してスコアを稼ごう！<br>
+        15秒経過で巨大タコボス出現！<br>
+        <br>
+        💥ダブルタップ（PCはダブルクリック）で<br>
+        スペシャル攻撃発動！<br>
+        画面の敵を一掃しボスへ大ダメージ！
+    </div>
+    <button id="startBtn">スタート</button>
+</div>
+
+<div id="gameScreen" class="screen">
+    <div id="hud">
+        <div>スコア:<span id="score">0</span></div>
+        <div>❤️<span id="life">5</span></div>
+        <div>💥<span id="specialCount">3</span></div>
+        <div>残り:<span id="time">30</span>秒</div>
+    </div>
+
+    <div id="gameArea">
+        <div id="bossHpBar">
+            <div id="bossHp"></div>
+        </div>
+        <div id="player">🐧</div>
+    </div>
+</div>
+
+<div id="resultScreen" class="screen">
+    <h1>結果発表</h1>
+    <div id="resultScore"></div>
+    <div id="rank"></div>
+    <button id="restartBtn">もう一度遊ぶ</button>
+</div>
+
+<script>
+const startScreen=document.getElementById("startScreen");
+const gameScreen=document.getElementById("gameScreen");
+const resultScreen=document.getElementById("resultScreen");
+
+const gameArea=document.getElementById("gameArea");
+const player=document.getElementById("player");
+
+const scoreEl=document.getElementById("score");
+const lifeEl=document.getElementById("life");
+const timeEl=document.getElementById("time");
+const specialCountEl=document.getElementById("specialCount");
+
+const resultScore=document.getElementById("resultScore");
+const rankEl=document.getElementById("rank");
+
+const bossHpBar=document.getElementById("bossHpBar");
+const bossHp=document.getElementById("bossHp");
+
+let score;
+let life;
+let timeLeft;
+let specialCount;
+
+let bullets=[];
+let enemies=[];
+
+let playerX;
+let playerY;
+
+let rect;
+let drag=false;
+let gameRunning=false;
+
+let boss=null;
+let bossSpawned=false;
+
+let enemyTimer;
+let bulletTimer;
+let secondTimer;
+let animationId;
+
+let lastTapTime=0;
+
+function show(screen){
+    [startScreen,gameScreen,resultScreen].forEach(v=>{
+        v.classList.remove("active");
+    });
+    screen.classList.add("active");
+}
+
+function startGame(){
+
+    score=0;
+    life=5;
+    timeLeft=30;
+    specialCount=3;
+
+    boss=null;
+    bossSpawned=false;
+
+    scoreEl.textContent=score;
+    lifeEl.textContent=life;
+    timeEl.textContent=timeLeft;
+    specialCountEl.textContent=specialCount;
+
+    document.querySelectorAll(".enemy,.bullet,.boss,.flash").forEach(e=>e.remove());
+
+    bullets=[];
+    enemies=[];
+
+    bossHpBar.style.display="none";
+
+    show(gameScreen);
+
+    setTimeout(()=>{
+
+        rect=gameArea.getBoundingClientRect();
+
+        playerX=rect.width/2;
+        playerY=rect.height-90;
+
+        updatePlayer();
+
+        gameRunning=true;
+
+        enemyTimer=setInterval(spawnEnemy,420);
+        bulletTimer=setInterval(shoot,170);
+
+        secondTimer=setInterval(()=>{
+
+            timeLeft--;
+            timeEl.textContent=timeLeft;
+
+            if(timeLeft===15 && !bossSpawned){
+                spawnBoss();
+            }
+
+            if(timeLeft<=0){
+                endGame();
+            }
+
+        },1000);
+
+        loop();
+
+    },50);
+}
+
+function updatePlayer(){
+    player.style.left=playerX+"px";
+    player.style.top=playerY+"px";
+}
+
+function spawnEnemy(){
+
+    if(!gameRunning)return;
+
+    const enemy=document.createElement("div");
+
+    enemy.className="enemy";
+    enemy.textContent=["🐙","🦑","🪼"][Math.floor(Math.random()*3)];
+
+    const x=Math.random()*(rect.width-40);
+
+    enemy.style.left=x+"px";
+    enemy.style.top="-40px";
+
+    gameArea.appendChild(enemy);
+
+    enemies.push({
+        el:enemy,
+        x:x,
+        y:-40,
+        speed:4+Math.random()*4
+    });
+}
+
+function shoot(){
+
+    if(!gameRunning)return;
+
+    const bullet=document.createElement("div");
+
+    bullet.className="bullet";
+    bullet.textContent="🐟";
+
+    gameArea.appendChild(bullet);
+
+    bullets.push({
+        el:bullet,
+        x:playerX+10,
+        y:playerY,
+        speed:11
+    });
+}
+
+function spawnBoss(){
+
+    bossSpawned=true;
+
+    const el=document.createElement("div");
+
+    el.className="boss";
+    el.textContent="🐙";
+
+    gameArea.appendChild(el);
+
+    boss={
+        el:el,
+        x:rect.width/2-50,
+        y:40,
+        dir:1,
+        hp:80,
+        maxHp:80
+    };
+
+    bossHpBar.style.display="block";
+    bossHp.style.width="100%";
+}
+
+function specialAttack(){
+
+    if(!gameRunning)return;
+    if(specialCount<=0)return;
+
+    specialCount--;
+    specialCountEl.textContent=specialCount;
+
+    const flash=document.createElement("div");
+    flash.className="flash";
+
+    gameArea.appendChild(flash);
+
+    setTimeout(()=>{
+        flash.remove();
+    },150);
+
+    let defeated=enemies.length;
+
+    enemies.forEach(e=>{
+        e.el.remove();
+    });
+
+    enemies=[];
+
+    score+=defeated*20;
+
+    if(boss){
+
+        boss.hp-=20;
+
+        if(boss.hp<0){
+            boss.hp=0;
+        }
+
+        bossHp.style.width=
+            (boss.hp/boss.maxHp*100)+"%";
+
+        if(boss.hp<=0){
+
+            score+=300;
+
+            boss.el.remove();
+            boss=null;
+
+            bossHpBar.style.display="none";
+        }
+    }
+
+    scoreEl.textContent=score;
+}
+
+function hit(a,b,aw=40,ah=40,bw=40,bh=40){
+    return(
+        a.x < b.x+bw &&
+        a.x+aw > b.x &&
+        a.y < b.y+bh &&
+        a.y+ah > b.y
+    );
+}
+
+function endGame(){
+
+    gameRunning=false;
+
+    clearInterval(enemyTimer);
+    clearInterval(bulletTimer);
+    clearInterval(secondTimer);
+
+    cancelAnimationFrame(animationId);
+
+    let rank="C";
+
+    if(score>=150) rank="B";
+    if(score>=300) rank="A";
+    if(score>=500) rank="S";
+
+    resultScore.textContent="最終スコア: "+score;
+    rankEl.textContent="ランク: "+rank;
+
+    show(resultScreen);
+}
+
+function loop(){
+
+    if(!gameRunning)return;
+
+    for(let i=bullets.length-1;i>=0;i--){
+
+        const b=bullets[i];
+
+        b.y-=b.speed;
+
+        b.el.style.left=b.x+"px";
+        b.el.style.top=b.y+"px";
+
+        if(b.y<-30){
+
+            b.el.remove();
+            bullets.splice(i,1);
+        }
+    }
+
+    for(let i=enemies.length-1;i>=0;i--){
+
+        const e=enemies[i];
+
+        e.y+=e.speed;
+
+        e.el.style.left=e.x+"px";
+        e.el.style.top=e.y+"px";
+
+        if(hit(
+            {x:e.x,y:e.y},
+            {x:playerX,y:playerY},
+            35,35,45,45
+        )){
+
+            e.el.remove();
+            enemies.splice(i,1);
+
+            life--;
+            lifeEl.textContent=life;
+
+            if(life<=0){
+                endGame();
+            }
+
+            continue;
+        }
+
+        for(let j=bullets.length-1;j>=0;j--){
+
+            const b=bullets[j];
+
+            if(hit(
+                {x:e.x,y:e.y},
+                {x:b.x,y:b.y}
+            )){
+
+                score+=10;
+                scoreEl.textContent=score;
+
+                e.el.remove();
+                b.el.remove();
+
+                enemies.splice(i,1);
+                bullets.splice(j,1);
+
+                break;
+            }
+        }
+
+        if(e.y>rect.height+50){
+
+            e.el.remove();
+            enemies.splice(i,1);
+        }
+    }
+
+    if(boss){
+
+        boss.x+=boss.dir*3;
+
+        if(boss.x<0 || boss.x>rect.width-100){
+            boss.dir*=-1;
+        }
+
+        boss.el.style.left=boss.x+"px";
+        boss.el.style.top=boss.y+"px";
+
+        if(hit(
+            {x:boss.x,y:boss.y},
+            {x:playerX,y:playerY},
+            90,90,45,45
+        )){
+            life=0;
+            lifeEl.textContent=0;
+            endGame();
+        }
+
+        for(let j=bullets.length-1;j>=0;j--){
+
+            const b=bullets[j];
+
+            if(hit(
+                {x:boss.x,y:boss.y},
+                {x:b.x,y:b.y},
+                90,90,25,25
+            )){
+
+                boss.hp--;
+
+                b.el.remove();
+                bullets.splice(j,1);
+
+                bossHp.style.width=
+                    (boss.hp/boss.maxHp*100)+"%";
+
+                if(boss.hp<=0){
+
+                    score+=300;
+                    scoreEl.textContent=score;
+
+                    boss.el.remove();
+                    boss=null;
+
+                    bossHpBar.style.display="none";
+                }
+            }
+        }
+    }
+
+    animationId=requestAnimationFrame(loop);
+}
+
+function movePlayer(clientX,clientY){
+
+    if(!gameRunning)return;
+
+    const r=gameArea.getBoundingClientRect();
+
+    playerX=Math.max(
+        0,
+        Math.min(clientX-r.left-22,r.width-45)
+    );
+
+    playerY=Math.max(
+        0,
+        Math.min(clientY-r.top-22,r.height-45)
+    );
+
+    updatePlayer();
+}
+
+gameArea.addEventListener("pointerdown",(e)=>{
+
+    const now=Date.now();
+
+    if(now-lastTapTime<300){
+        specialAttack();
+    }
+
+    lastTapTime=now;
+
+    drag=true;
+
+    movePlayer(e.clientX,e.clientY);
+});
+
+gameArea.addEventListener("pointermove",(e)=>{
+    if(drag){
+        movePlayer(e.clientX,e.clientY);
+    }
+});
+
+window.addEventListener("pointerup",()=>{
+    drag=false;
+});
+
+gameArea.addEventListener("dblclick",()=>{
+    specialAttack();
+});
+
+document.getElementById("startBtn")
+.addEventListener("click",startGame);
+
+document.getElementById("restartBtn")
+.addEventListener("click",startGame);
+</script>
+
+</body>
+</html>
